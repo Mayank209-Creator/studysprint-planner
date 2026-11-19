@@ -28,3 +28,5 @@ use the editor.
   own key and store it in Secrets.
 - **Secrets.** Lovable manages them. Do not put secret values in the repo.
 <!-- LOVABLE:END -->
+
+- Keep StudySprint task rules in pure helpers and persist task records in browser localStorage, because the requested demo works without login, external services, or cross-device sync.

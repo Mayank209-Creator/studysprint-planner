@@ -1,0 +1,3 @@
+- [x] Build the responsive StudySprint dashboard with working task creation, editing, completion, deletion, filters, sample data, and browser persistence.
+- [x] Add tests for dashboard counts, filters, and demo sample data.
+- [x] Provide the requested hackathon presentation notes and local run instructions.
