@@ -19,6 +19,12 @@ import {
   X,
 } from "lucide-react";
 import { toast } from "sonner";
+import { LogOut } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
+import { AuthScreen } from "@/components/AuthScreen";
+import { useSessionUser } from "@/hooks/use-session";
+import { createTask, fetchTasks, removeTask, updateTask } from "@/lib/task-store";
 
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -29,14 +35,11 @@ import {
   filterTasks,
   getLocalDateString,
   getTaskStats,
-  isStudyTask,
-  makeSampleTasks,
   type StudyTask,
   type TaskFilter,
   type TaskPriority,
 } from "@/lib/study-tasks";
 
-const STORAGE_KEY = "studysprint.tasks.v1";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -49,7 +52,7 @@ export const Route = createFileRoute("/")({
       { name: "twitter:card", content: "summary" },
     ],
   }),
-  component: StudySprint,
+  component: StudySprintGate,
 });
 
 const navigation: { filter: TaskFilter; label: string; icon: typeof ListTodo }[] = [
@@ -67,38 +70,31 @@ const emptyForm = (today: string) => ({
   priority: "Medium" as TaskPriority,
 });
 
-function StudySprint() {
+function StudySprintGate() {
+  const { user, loading } = useSessionUser();
+  if (loading) return <div className="app-shell grid min-h-screen place-items-center text-sm text-muted-foreground">Loading StudySprint…</div>;
+  if (!user) return <AuthScreen />;
+  return <StudySprint key={user.id} email={user.email ?? ""} />;
+}
+
+function StudySprint({ email }: { email: string }) {
   const today = getLocalDateString();
-  const [tasks, setTasks] = useState<StudyTask[]>(() => makeSampleTasks(today));
+  const queryClient = useQueryClient();
+  const [tasks, setTasks] = useState<StudyTask[]>([]);
   const [filter, setFilter] = useState<TaskFilter>("all");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<StudyTask | null>(null);
   const [form, setForm] = useState(() => emptyForm(today));
-  const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    try {
-      const saved = window.localStorage.getItem(STORAGE_KEY);
-      if (saved !== null) {
-        const parsed: unknown = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.every(isStudyTask)) {
-          setTasks(parsed);
-        }
-      }
-    } catch {
-      toast.error("Couldn't load saved tasks. The sample tasks are still here.");
-    }
-    setReady(true);
+    fetchTasks().then(setTasks).catch(() => toast.error("Couldn't load your tasks. Please refresh."));
   }, []);
 
-  useEffect(() => {
-    if (!ready) return;
-    try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
-    } catch {
-      toast.error("Couldn't save tasks in this browser. Please check available storage.");
-    }
-  }, [ready, tasks]);
+  async function signOut() {
+    await queryClient.cancelQueries();
+    queryClient.clear();
+    await supabase.auth.signOut();
+  }
 
   const stats = useMemo(() => getTaskStats(tasks, today), [tasks, today]);
   const visibleTasks = useMemo(() => filterTasks(tasks, filter, today), [tasks, filter, today]);
@@ -118,35 +114,47 @@ function StudySprint() {
     setDialogOpen(true);
   }
 
-  function saveTask(event: FormEvent<HTMLFormElement>) {
+  async function saveTask(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const title = form.title.trim();
     const subject = form.subject.trim();
     if (!title || !subject || !form.dueDate) return;
-
-    if (editingTask) {
-      setTasks((current) => current.map((task) => task.id === editingTask.id
-        ? { ...task, title, subject, dueDate: form.dueDate, priority: form.priority, sample: false }
-        : task));
-      toast.success("Your task was updated.");
-    } else {
-      setTasks((current) => [
-        { id: crypto.randomUUID(), title, subject, dueDate: form.dueDate, priority: form.priority, completed: false, sample: false },
-        ...current,
-      ]);
-      toast.success("Task added to your study list.");
+    try {
+      if (editingTask) {
+        await updateTask(editingTask.id, { title, subject, dueDate: form.dueDate, priority: form.priority });
+        setTasks((current) => current.map((task) => task.id === editingTask.id
+          ? { ...task, title, subject, dueDate: form.dueDate, priority: form.priority }
+          : task));
+        toast.success("Your task was updated.");
+      } else {
+        const created = await createTask({ title, subject, dueDate: form.dueDate, priority: form.priority });
+        setTasks((current) => [created, ...current]);
+        toast.success("Task added to your study list.");
+      }
+      setDialogOpen(false);
+    } catch {
+      toast.error("Couldn't save the task. Please try again.");
     }
-    setDialogOpen(false);
   }
 
-  function toggleTask(task: StudyTask) {
-    setTasks((current) => current.map((item) => item.id === task.id ? { ...item, completed: !item.completed } : item));
-    toast.success(task.completed ? "Task moved back to your to-do list." : "Nice work — task completed!");
+  async function toggleTask(task: StudyTask) {
+    try {
+      await updateTask(task.id, { completed: !task.completed });
+      setTasks((current) => current.map((item) => item.id === task.id ? { ...item, completed: !item.completed } : item));
+      toast.success(task.completed ? "Task moved back to your to-do list." : "Nice work — task completed!");
+    } catch {
+      toast.error("Couldn't update the task.");
+    }
   }
 
-  function deleteTask(task: StudyTask) {
-    setTasks((current) => current.filter((item) => item.id !== task.id));
-    toast.success("Task deleted.");
+  async function deleteTask(task: StudyTask) {
+    try {
+      await removeTask(task.id);
+      setTasks((current) => current.filter((item) => item.id !== task.id));
+      toast.success("Task deleted.");
+    } catch {
+      toast.error("Couldn't delete the task.");
+    }
   }
 
   const filterTitle = navigation.find((item) => item.filter === filter)?.label ?? "All tasks";
@@ -190,7 +198,11 @@ function StudySprint() {
           <p className="mt-2 text-xs leading-5 text-sidebar-foreground/70">Every checked-off task is a little win. Keep your pace, not perfection.</p>
         </div>
         <div className="mt-5 hidden items-center gap-2 text-xs text-sidebar-foreground/50 lg:flex">
-          <span className="size-2 rounded-full bg-sidebar-primary" /> Saved on this device
+          <span className="size-2 rounded-full bg-sidebar-primary" /> Synced to your account
+        </div>
+        <div className="mt-4 flex items-center gap-2">
+          <span className="min-w-0 flex-1 truncate text-xs text-sidebar-foreground/70" title={email}>{email}</span>
+          <Button variant="ghost" size="sm" onClick={signOut} className="text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"><LogOut size={15} /> Sign out</Button>
         </div>
       </aside>
 
