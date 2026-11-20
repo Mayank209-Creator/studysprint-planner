@@ -29,4 +29,4 @@ use the editor.
 - **Secrets.** Lovable manages them. Do not put secret values in the repo.
 <!-- LOVABLE:END -->
 
-- Keep StudySprint task rules in pure helpers and persist task records in browser localStorage, because the requested demo works without login, external services, or cross-device sync.
+- Keep StudySprint task rules in pure helpers; persist tasks per signed-in student in the Lovable Cloud `study_tasks` table (RLS owner-only) via src/lib/task-store.ts, because students need private tasks synced across devices.
